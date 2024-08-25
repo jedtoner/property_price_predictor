@@ -1,0 +1,6 @@
+ipython
+pandas
+requests
+openpyxl
+statsmodels
+google-generativeai
