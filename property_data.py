@@ -4,6 +4,8 @@ import json
 import os
 import google.generativeai as genai
 import numpy as np
+from statsmodels.tsa.api import VAR
+import sys
 
 PROPERTY_CSV = 'domain_properties.csv' #obtained from https://www.kaggle.com/datasets/alexlau203/sydney-house-prices
 CRIME_XLSX = 'LgaRankings_27_Offences.xlsx' #obtained from https://bocsar.nsw.gov.au/statistics-dashboards/open-datasets/local-area-rankings.html
@@ -40,9 +42,12 @@ class MacroEconomicDataLoader:
         return response.json()
     
 class SuburbCrimeDataLoader:
-    def __init__(self, data_path):
+    def __init__(self, data_path, lga_mapping):
         self.data_path = data_path
         self.data = self.load_data(data_path)
+        self.lga_mapping = lga_mapping
+        self.lga_list = self.extract_lga_list()
+        print(self.lga_list)
         self.clean_data = self.clean_data()
 
     def load_data(self, data_path):
@@ -50,6 +55,9 @@ class SuburbCrimeDataLoader:
         last_row = 135
         sheets_dict = pd.read_excel(data_path, header = header_row, nrows = last_row - header_row, sheet_name=None)
         return sheets_dict
+    
+    def extract_lga_list(self):
+        return list(set(element for sublist in self.lga_mapping.values() for element in sublist))
     
     def clean_data(self):
         data = self.data
@@ -69,24 +77,20 @@ class SuburbCrimeDataLoader:
     def back_forecast(self, df):
         # Ensure the index is datetime for time series forecasting
         df.index = pd.to_datetime(df.index, format='%Y')
-        
         # Fit VAR model on the available data (2019-2023)
-        model = VAR(df)
+        model = VAR(df, freq = 'YS-JAN')
         model_fit = model.fit(maxlags=1)
-        
         # Forecast the missing years (2016-2018)
         lag_order = model_fit.k_ar
         forecast_input = df.values[-lag_order:]
         forecast = model_fit.forecast(y=forecast_input, steps=3)
-        
         # Create a DataFrame for the forecasted values
-        forecasted_index = pd.date_range(start='2016', end='2018', freq='Y')
+        forecasted_index = pd.date_range(start='2016', periods = 3, freq='YS-JAN')
         forecasted_df = pd.DataFrame(forecast, index=forecasted_index, columns=df.columns)
         
         # Combine the forecasted values with the original data
         combined_df = pd.concat([forecasted_df, df])
         combined_df = combined_df.sort_index()
-        
         return combined_df
 
 
@@ -137,22 +141,31 @@ class LGAMapping:
         return output
     
             
-        
-
-    
 
 
 if __name__ == '__main__':
     property_loader = PropertyMetaDataLoader(PROPERTY_CSV)
     # print(property_loader.data.head())
 
-    suburb_crime_loader = SuburbCrimeDataLoader(CRIME_XLSX)
+    lga_mapping = json.loads(open('suburb_to_lga_mapping.json').read())
+    #print(lga_mapping)
+    suburb_crime_loader = SuburbCrimeDataLoader(CRIME_XLSX, lga_mapping)
     x = suburb_crime_loader.clean_data['Assault - domestic violence']
-    print(x)
+    print(list(x.columns))
+    #y = suburb_crime_loader.back_forecast(x)
 
     # suburbs = property_loader.data['suburb'].unique()
     # lga_mapping = LGAMapping(suburbs, lgas, LGA_MAPPING_TSV)
     # lga_mapping.map_suburb_to_lga(save = True)
+
+    # import tabula
+    # import pandas as pd
+
+    # # Path to the PDF file
+    # pdf_path = 'path_to_your_pdf_file.pdf'
+
+    # # Extract tables from the PDF
+    # tables = tabula.read_pdf(pdf_path, pages='all', multiple_tables=True)
 
 
     

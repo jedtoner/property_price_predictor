@@ -12,12 +12,13 @@ Data:
  - Busy road / train factor
  - Amenities (solar panels, heating)
  - Neighbourhood quality (crime rates, school quality)
-  - https://aucrimerate.com/greater-sydney-crime-rate-statistics/ only 2020/2021 data
-  - LGA crime stats https://www.bocsar.nsw.gov.au/Pages/bocsar_crime_stats/bocsar_lgaexceltables.aspx since 2019
+  - https://www.dva.gov.au/sites/default/files/Providers/nsworp.pdf Suburb to postcode
+  - https://docs.google.com/spreadsheets/d/1tHCxouhyM4edDvF60VG7nzs5QxID3ADwr3DGJh71qFg/edit?gid=900781287#gid=900781287 postcode to LGA
 
  Considerations:
   - Sq footage not always available
 
 TODO:
-  - Make git repo
-  - Fix up venv
+  - Use code at bottom of file to read suburb to postcode pdf (move tabula to req.txt)
+  - Improve suburb to LGA workflow
+  - Look at 'suburb rankings' to infer neighbourhood quality
