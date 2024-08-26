@@ -6,6 +6,10 @@ import google.generativeai as genai
 import numpy as np
 from statsmodels.tsa.api import VAR
 import sys
+import tabula
+
+# Suppress the SettingWithCopyWarning
+pd.options.mode.chained_assignment = None
 
 PROPERTY_CSV = 'domain_properties.csv' #obtained from https://www.kaggle.com/datasets/alexlau203/sydney-house-prices
 CRIME_XLSX = 'LgaRankings_27_Offences.xlsx' #obtained from https://bocsar.nsw.gov.au/statistics-dashboards/open-datasets/local-area-rankings.html
@@ -45,9 +49,9 @@ class SuburbCrimeDataLoader:
     def __init__(self, data_path, lga_mapping):
         self.data_path = data_path
         self.data = self.load_data(data_path)
-        self.lga_mapping = lga_mapping
-        self.lga_list = self.extract_lga_list()
-        print(self.lga_list)
+        # self.lga_mapping = lga_mapping
+        # self.lga_list = self.extract_lga_list()
+        # print(self.lga_list)
         self.clean_data = self.clean_data()
 
     def load_data(self, data_path):
@@ -132,7 +136,7 @@ class LGAMapping:
         Ensure that the response starts and ends with curly braces, and there is no additional formatting.
         """
         genai.configure(api_key=API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-pro')
         output = model.generate_content(prompt).text
 
         if save:
@@ -140,32 +144,109 @@ class LGAMapping:
                 f.write(output)
         return output
     
-            
+def lga_to_suburb_mapping(lgas, suburbs, save = False):
+    lga_str = str(list(lgas))
+    suburb_str = str(list(suburbs))
+    prompt = f"""
+    I have a list of LGAs: {lga_str}
+    I have a list of suburbs: {suburb_str}
+    Please provide a mapping between the provided list of LGAs and the provided list of suburbs.
+
+    The response should be in json format, which can be directly parsed into a python dictionary.
+    Ensure that the response starts and ends with curly braces, and there is no additional formatting.
+    """
+    genai.configure(api_key=API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-pro')
+    output = model.generate_content(prompt).text
+
+    if save:
+        with open('suburb_to_lga_mapping.json', 'w') as f:
+            f.write(output)
+    return output
+    
+class LGASuburbMapping:
+    def __init__(self, suburb_postcode_mapping_path, lga_postcode_mapping_path):
+        self.suburb_postcode_mapping_path = suburb_postcode_mapping_path
+        self.suburb_postcode_mapping = self.load_suburb_postcode_mapping(suburb_postcode_mapping_path)
+        self.suburbs = self.suburb_postcode_mapping['suburb'].unique()
+        self.postcodes = self.suburb_postcode_mapping['postcode'].unique()
+        self.lga_postcode_mapping_path = lga_postcode_mapping_path
+        self.lga_postcode_mapping = self.load_lga_postcode_mapping(lga_postcode_mapping_path)
+        self.lgas = self.lga_postcode_mapping['LGA region'].unique()
+
+    def load_suburb_postcode_mapping(self, suburb_postcode_mapping_path):
+        columns = ['suburb', 'postcode']
+        output_df = pd.DataFrame(columns=columns)
+        tables = tabula.read_pdf(suburb_postcode_mapping_path, pages='all', multiple_tables=True)
+
+        def extract_values(row):
+            all_caps = None
+            number = None
+            for value in row:
+                if isinstance(value, str) and value.isupper():
+                    all_caps = value # suburb name
+                elif isinstance(value, (int, float)) and not pd.isna(value) or (isinstance(value, str) and value.isdigit()):
+                    number = str(int(value)) # postcode
+            return pd.Series([all_caps, number])
+
+        for table in tables:
+            formatted_table = table.T.reset_index().T # some rows get stored as column names
+            mapping = formatted_table.apply(extract_values, axis=1).reset_index(drop=True)
+            mapping.columns = columns
+            if not mapping.empty:
+                output_df = pd.concat([output_df, mapping.dropna()], axis=0)
+
+        extra_suburbs = [
+            'GREENHILLS BEACH', 'COLLAROY PLATEAU', 'JORDAN SPRINGS', 'BILGOLA BEACH',
+            'POTTS HILL', 'GLEDSWOOD HILLS', 'BUNGARRIBEE', 'BILGOLA PLATEAU',
+            'CARNES HILL', 'CADDENS', 'ELIZABETH HILLS', 'KURRABA POINT'
+        ] #manual additions
+        extra_postcodes = [
+            '2230', '2097', '2747', '2107', '2143', '2557', '2763', '2107', '2171', '2747', '2171', '2089'
+        ] #manual additions
+
+        output_df = pd.concat([output_df, pd.DataFrame({'suburb': extra_suburbs, 'postcode': extra_postcodes})], axis=0)
+        
+        return output_df.reset_index(drop=True)
+    
+    def load_lga_postcode_mapping(self, lga_postcode_mapping_path):
+        
+        table = pd.read_csv(lga_postcode_mapping_path)
+        nsw_table = table[table['State'] == 'New South Wales']
+        nsw_table['Postcode'] = nsw_table['Postcode'].astype(str)
+
+        #when finished map these LGA's to crime LGA's
+        return nsw_table.drop(columns = ['State'])
+
 
 
 if __name__ == '__main__':
     property_loader = PropertyMetaDataLoader(PROPERTY_CSV)
-    # print(property_loader.data.head())
+    suburbs = property_loader.data['suburb'].unique()
+    # # print(property_loader.data.head())
 
     lga_mapping = json.loads(open('suburb_to_lga_mapping.json').read())
-    #print(lga_mapping)
+    # #print(lga_mapping)
     suburb_crime_loader = SuburbCrimeDataLoader(CRIME_XLSX, lga_mapping)
-    x = suburb_crime_loader.clean_data['Assault - domestic violence']
-    print(list(x.columns))
+    crime_lgas = suburb_crime_loader.clean_data['Assault - domestic violence'].columns
+    # print(list(x.columns))
     #y = suburb_crime_loader.back_forecast(x)
+
+    mapping = lga_to_suburb_mapping(crime_lgas, suburbs, save = False)
 
     # suburbs = property_loader.data['suburb'].unique()
     # lga_mapping = LGAMapping(suburbs, lgas, LGA_MAPPING_TSV)
     # lga_mapping.map_suburb_to_lga(save = True)
 
-    # import tabula
-    # import pandas as pd
 
     # # Path to the PDF file
-    # pdf_path = 'path_to_your_pdf_file.pdf'
+    # pdf_path = 'https://www.dva.gov.au/sites/default/files/Providers/nsworp.pdf'
 
     # # Extract tables from the PDF
     # tables = tabula.read_pdf(pdf_path, pages='all', multiple_tables=True)
+
+    # mapping = LGASuburbMapping('https://www.dva.gov.au/sites/default/files/Providers/nsworp.pdf', 'lga_postcode_mappings.csv')
+    # postcode_lgas = [s.upper() for s in mapping.lgas]
 
 
     

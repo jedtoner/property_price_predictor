@@ -19,6 +19,6 @@ Data:
   - Sq footage not always available
 
 TODO:
-  - Use code at bottom of file to read suburb to postcode pdf (move tabula to req.txt)
-  - Improve suburb to LGA workflow
+  - Fix up LGA to Suburb mapping
+  - Clean up file paths / old LGA-suburb mapping / python file in general
   - Look at 'suburb rankings' to infer neighbourhood quality
