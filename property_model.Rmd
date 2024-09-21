@@ -1,0 +1,293 @@
+---
+title: "property_model.R"
+output: pdf_document
+date: "2024-09-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Loading in libraries and data
+```{r}
+library(tidyverse)
+unneeded_cols <- c('suburb', 'date_sold', 'suburb_lat','suburb_lng','suburb_elevation', 'suburb_sqkm', 'suburb_population')
+df <- read.csv('master_dataset.csv') |> as_tibble() |> dplyr::select(-unneeded_cols)
+df
+```
+
+We will do stepwise selection to select relevant variables from master dataset
+
+```{r}
+null_model <- lm(price ~ 1, data = df)
+full_model <- lm(price ~ ., data = df)
+
+forward_model <- step(null_model,
+                      scope = list(lower = null_model, upper = full_model),
+                      direction = "both")
+
+summary(forward_model)
+```
+So all variables are used in the model
+
+Do a train / test split and test the out of sample mean absolute percentage error
+
+```{r}
+# Load necessary libraries
+library(caret)  # For train-test split
+library(Metrics)  # For MAPE calculation
+
+# Set seed for reproducibility
+set.seed(23)
+
+# Create a train / test / validation split (70% / 15% / 15%)
+train_index <- createDataPartition(df$price, p = 0.7, list = FALSE)
+train_data <- df[train_index, ]
+remaining_data <- df[-train_index, ]
+validation_index <- createDataPartition(remaining_data$price, p = 0.5, list = FALSE)
+validation_data <- remaining_data[validation_index, ]
+test_data <- remaining_data[-validation_index, ]
+
+# Fit a linear model on the training data
+model <- lm(price ~ ., data = train_data)
+
+# Predict on the test data
+predictions <- predict(model, newdata = test_data)
+
+# Calculate MAPE
+mape_value <- mape(test_data$price, predictions)
+
+# Print the MAPE
+print(paste("Out-of-sample MAPE:", 100*round(mape_value, 4)))
+
+```
+
+
+Decision Trees
+```{r}
+library(rpart)
+
+# Fit the decision tree model
+dt_model <- rpart(price ~ ., data = train_data)
+
+# Predict on the test set
+dt_predictions <- predict(dt_model, newdata = test_data)
+
+# Calculate MAPE for Decision Tree
+dt_mape <- mape(test_data$price, dt_predictions)
+print(paste("Decision Tree MAPE:", 100*round(dt_mape, 4)))
+```
+
+```{r}
+library(randomForest)
+# Fit the random forest model
+rf_model <- randomForest(price ~ ., data = train_data)
+
+# Predict on the test set
+rf_predictions <- predict(rf_model, newdata = test_data)
+
+# Calculate MAPE for Random Forest
+rf_mape <- mape(test_data$price, rf_predictions)
+print(paste("Random Forest MAPE:", 100*round(rf_mape, 4)))
+```
+
+```{r}
+library(xgboost)  # For Gradient Boosting
+
+convert_to_factors <- function(data) {
+  cat_vars <- sapply(data, is.character)
+  data[cat_vars] <- lapply(data[cat_vars], as.factor)
+  return(data)
+}
+
+train_data <- convert_to_factors(train_data)
+test_data <- convert_to_factors(test_data)
+
+one_hot_encode <- function(df) {
+  # Identify character columns
+  char_cols <- sapply(df, is.factor)
+  
+  # Apply one-hot encoding to character columns
+  df_encoded <- df
+  for (col in names(df)[char_cols]) {
+    # Create one-hot encoded matrix for the column
+    one_hot <- model.matrix(~ get(col) - 1, data = df)
+    # Remove the original character column
+    df_encoded[[col]] <- NULL
+    # Bind the one-hot encoded columns to the original data frame
+    df_encoded <- cbind(df_encoded, one_hot)
+  }
+  names(df_encoded) <- gsub("get\\(col\\)", "", names(df_encoded))
+  
+  return(df_encoded)
+}
+
+n_train_rows <- nrow(train_data)
+full_dataset <- rbind(train_data, test_data)
+dataset_encoded <- one_hot_encode(full_dataset)
+train_data_encoded <- dataset_encoded[1:n_train_rows, ] |> dplyr::select(-price)
+test_data_encoded <- dataset_encoded[(n_train_rows + 1):nrow(dataset_encoded), ] |> dplyr::select(-price)
+train_response <- dataset_encoded[1:n_train_rows, ]$price
+test_response <- dataset_encoded[(n_train_rows + 1):nrow(dataset_encoded), ]$price
+
+# Create DMatrix objects
+train_matrix <- xgb.DMatrix(data = data.matrix(train_data_encoded), label = train_response)
+test_matrix <- xgb.DMatrix(data = data.matrix(test_data_encoded))
+
+# Train the XGBoost model
+xgb_model <- xgboost(data = train_matrix,
+                     objective = "reg:squarederror",
+                     nrounds = 100,
+                     verbose = 0)
+
+# Make predictions
+xgb_predictions <- predict(xgb_model, test_matrix)
+
+# Calculate MAPE for XGBoost
+xgb_mape <- mape(test_data$price, xgb_predictions)
+print(paste("XGBoost MAPE:", 100*round(xgb_mape, 4)))
+```
+
+
+```{r}
+library(e1071)  # For SVM
+# Fit the SVM model
+svm_model <- svm(price ~ ., data = train_data)
+
+# Predict on the test set
+svm_predictions <- predict(svm_model, newdata = test_data)
+
+# Calculate MAPE for SVM
+svm_mape <- mape(test_data$price, svm_predictions)
+print(paste("SVM MAPE:", 100*round(svm_mape, 4)))
+```
+
+The MAPE for XGBoost is the lowest among all models, so we will use it for further analysis. First get the datasets ready
+
+```{r}
+
+# Get the train / test / validation sets ready for hyperparameter tuning
+train_rows <- nrow(train_data)
+test_rows <- nrow(test_data)
+full_dataset <- rbind(train_data, test_data, validation_data)
+dataset_encoded <- one_hot_encode(full_dataset)
+train_data_encoded <- dataset_encoded[1:n_train_rows, ] |> dplyr::select(-price)
+test_data_encoded <- dataset_encoded[(n_train_rows + 1):(n_train_rows + test_rows), ] |> dplyr::select(-price)
+validation_data_encoded <- dataset_encoded[(n_train_rows + test_rows + 1):nrow(dataset_encoded), ] |> dplyr::select(-price)
+train_response <- dataset_encoded[1:n_train_rows, ]$price
+test_response <- dataset_encoded[(n_train_rows + 1):(n_train_rows + test_rows), ]$price
+validation_response <- dataset_encoded[(n_train_rows + test_rows + 1):nrow(dataset_encoded), ]$price
+train_matrix <- xgb.DMatrix(data = data.matrix(train_data_encoded), label = train_response)
+validation_matrix <- xgb.DMatrix(data = data.matrix(validation_data_encoded), label = validation_response)
+
+```
+
+Now we will do hyperparameter tuning for XGBoost
+
+```{r, echo=FALSE}
+
+grid_size <- 4
+tune_grid <- expand.grid(
+  nrounds = seq(50, 150, length.out = grid_size),
+  max_depth = seq(3, 9, length.out = grid_size),
+  eta = 10 ^ runif(grid_size, -2, 0),
+  gamma = seq(0, 0.5, length.out = grid_size),
+  colsample_bytree = seq(0.5, 1, length.out = grid_size),
+  min_child_weight = seq(1, 5, length.out = grid_size)
+)
+
+set.seed(123)  # For reproducibility
+best_rmse <- Inf
+best_params <- NULL
+
+# 200 iterations a minute
+for (i in 1:nrow(tune_grid)) {
+  params <- tune_grid[i, ]
+  
+  # Train the model
+  model <- xgboost(data = train_matrix,
+                   nrounds = params$nrounds,
+                   max_depth = params$max_depth,
+                   eta = params$eta,
+                   gamma = params$gamma,
+                   colsample_bytree = params$colsample_bytree,
+                   min_child_weight = params$min_child_weight,
+                   objective = "reg:squarederror",
+                   verbose = 0)
+
+  # Predict on validation set
+  predictions <- predict(model, newdata = validation_matrix)
+  
+  # Calculate RMSE
+  rmse <- sqrt(mean((validation_data$price - predictions)^2))
+  # Check if it's the best RMSE
+  if (rmse < best_rmse) {
+    best_rmse <- rmse
+    best_params <- params
+  }
+}
+
+
+```
+
+
+```{r}
+# Now that we have the best hyperparameters, we can train the final model and use k-fold cross-validation to evaluate it
+
+set.seed(123) 
+
+# Define k-fold cross-validation
+k <- 5
+folds <- createFolds(train_data$price, k = k)
+
+cv_results <- sapply(folds, function(fold) {
+  train_fold <- train_data[-fold, ]
+  test_fold <- train_data[fold, ]
+  
+  train_fold_matrix <- xgb.DMatrix(data = data.matrix(train_fold[,-which(names(train_fold) == "price")]), label = train_fold$price)
+  test_fold_matrix <- xgb.DMatrix(data = data.matrix(test_fold[,-which(names(test_fold) == "price")]), label = test_fold$price)
+  
+  # Train the model with the best hyperparameters
+  final_model <- xgboost(data = train_fold_matrix,
+                          nrounds = best_params$nrounds,
+                          max_depth = best_params$max_depth,
+                          eta = best_params$eta,
+                          gamma = best_params$gamma,
+                          colsample_bytree = best_params$colsample_bytree,
+                          min_child_weight = best_params$min_child_weight,
+                          objective = "reg:squarederror",
+                          verbose = 0)
+  
+  # Predict on the test fold
+  test_predictions <- predict(final_model, newdata = test_fold_matrix)
+  
+  # Calculate RMSE for the fold
+  actual <- test_fold$price
+  predicted <- test_predictions
+  rmse_fold <- sqrt(mean((actual - predicted)^2))
+  mape_fold <- mean(abs((actual - predicted) / actual)) * 100
+  return(list(rmse = rmse_fold, mape = mape_fold))
+})
+
+# Calculate average RMSE, MAPE across folds
+cv_results_df <- data.frame(t(cv_results))
+avg_rmse <- cv_results_df$rmse |> unlist() |> mean()
+avg_mape <- cv_results_df$mape |> unlist() |> mean()
+
+print(paste("Average RMSE across folds:", avg_rmse))
+print(paste("Average MAPE across folds:", avg_mape))
+
+
+```
+
+
+Business Impact of the Analysis:
+This analysis aims to accurately predict property prices, providing significant value for stakeholders in real estate, including investors, developers, and buyers. An effective model could enhance decision-making by offering data-driven insights into pricing trends and potential property valuations. By integrating a range of predictive features such as property attributes and macroeconomic data, the model can better forecast future prices, thereby reducing uncertainty and helping businesses manage risks and seize investment opportunities more strategically.
+
+Possible Improvements to the Model:
+Feature Selection: Although stepwise selection was used, exploring other feature selection methods (e.g., LASSO regression) could yield better results by reducing multicollinearity and improving generalization.
+Model Variety: Incorporating ensemble models like Random Forest or Gradient Boosting (e.g., XGBoost) might enhance performance compared to linear models.
+Validation Strategy: Implementing k-fold cross-validation instead of a single train/test split could provide a more robust evaluation of model performance and reduce variance in error estimates.
+Extra data ingestion: Extra data such as property age, proximity to amenities, and local school quality could further enhance the model's predictive power and accuracy.
+ 

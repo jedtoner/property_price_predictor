@@ -1,7 +1,4 @@
-ipython
 pandas
-requests
-openpyxl
-statsmodels==0.14.2
-scipy==1.14.0
 google-generativeai
+beautifulsoup4
+python-Levenshtein
