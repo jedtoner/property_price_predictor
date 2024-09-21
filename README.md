@@ -33,6 +33,6 @@ export API_KEY='your_gemini_api_key'
 
 ## Usage
 - Run the `property_data.ipynb` notebook to load, clean, and enrich the data.
-- Run the `property_model.Rmd` file to build and evaluate the models.
+- Run the `property_model.Rmd` file to build and evaluate the models OR view `property_model_knitted.pdf` to view code and output
 
 
