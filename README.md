@@ -16,7 +16,7 @@ This project aims to analyze and predict property prices in Sydney using a compr
 To set up the project locally, follow these steps:
 
 ```bash
-git clone https://github.com/your-username/property-price-prediction.git
+git clone https://github.com/jedtoner/property_price_predictor.git
 cd property-price-prediction
 python3 -m venv property_venv
 source property_venv/bin/activate
